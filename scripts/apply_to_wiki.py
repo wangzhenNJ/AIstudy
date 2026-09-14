@@ -3,6 +3,7 @@
 """读取 wiki-content/manifest.json，把每日简报合并进 wiki 仓库。
 
 只做「追加」：不覆盖任何已有内容，按 URL 去重。
+manifest 中可选的 fixes 字段用于订正已发布条目的链接（按标题关键字匹配后整行重建）。
 运行于 GitHub Actions，工作目录为仓库根目录，wiki 已克隆到 ./wiki。
 """
 import io
@@ -23,6 +24,32 @@ def ensure_title(content, name, title):
     return content
 
 
+def apply_fixes(m, date):
+    """订正已发布条目的链接：按 match 匹配标题关键字，整行重建。"""
+    done = 0
+    for fix in m.get("fixes", []):
+        path = os.path.join(WIKI, fix["file"])
+        if not os.path.exists(path):
+            continue
+        lines = io.open(path, encoding="utf-8").read().splitlines()
+        hit = False
+        for i, ln in enumerate(lines):
+            if fix["match"] in ln:
+                if "title" in fix:
+                    lines[i] = "- [%s] %s — %s — [链接](%s) %s" % (
+                        fix.get("date", date), fix["title"], fix.get("note", ""),
+                        fix["url"], fix.get("level", ""))
+                else:
+                    lines[i] = re.sub(r"\((https?://[^)]+)\)", "(%s)" % fix["url"], ln)
+                hit = True
+                break
+        if hit:
+            io.open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+            done += 1
+            print("  订正 %s: %s" % (fix["file"], fix["match"]))
+    return done
+
+
 def main():
     if not os.path.exists(MANIFEST):
         print("manifest 不存在，跳过")
@@ -31,6 +58,9 @@ def main():
     m = json.load(io.open(MANIFEST, encoding="utf-8"))
     date = m["date"]
     print("处理日期:", date)
+
+    # 0) 先订正已有条目的链接
+    apply_fixes(m, date)
 
     # 1) 分类页追加
     for fname, items in m.get("categories", {}).items():
